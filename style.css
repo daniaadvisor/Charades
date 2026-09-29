@@ -45,6 +45,7 @@ p {
 
 .screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -148,7 +149,7 @@ p {
 }
 
 #flash-overlay {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;
@@ -196,4 +197,263 @@ p {
   font-size: 0.9rem;
   color: #555;
   line-height: 1.5;
+}
+
+/* =====================================================================
+   AÑADIDOS: HUD, cuenta atrás, duración, resultados y anti-molestias
+   ===================================================================== */
+
+/* Nada de seleccionar texto, zoom por doble toque ni "tirar para recargar"
+   mientras se juega con el móvil en la frente. */
+html,
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+/* --- Selector de duración (menú) --- */
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.duration-label {
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.duration-btn {
+  background: transparent;
+  color: #ffffff;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-family: "Quicksand", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.duration-btn.active {
+  background: #ffffff;
+  color: #0c0c4b;
+  border-color: #ffffff;
+}
+
+.duration-btn:active {
+  transform: scale(0.94);
+}
+
+/* --- Pantalla de juego --- */
+#screen-game {
+  justify-content: center;
+  padding: 10px;
+}
+
+#abort-btn {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  z-index: 50;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#abort-btn:active {
+  transform: scale(0.9);
+}
+
+#instructions-view .hint {
+  font-size: 1.1rem;
+  opacity: 0.6;
+  margin-top: 24px;
+}
+
+#countdown-number {
+  font-size: 8rem;
+  margin: 0;
+  color: #ffffff;
+}
+
+/* --- HUD: tiempo y marcador en vivo --- */
+#active-game-view {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#hud {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+
+#timer {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #ff4757;
+  min-width: 2.5ch;
+}
+
+#timer.pulsing {
+  animation: timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+#live-score-box {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #4cd137;
+}
+
+/* El destello tapa toda la pantalla: es la confirmación que se ve
+   aunque el móvil esté en silencio. */
+#flash-overlay {
+  flex-direction: column;
+  text-align: center;
+}
+
+#flash-text {
+  font-size: clamp(2.5rem, 12vw, 6rem);
+  margin: 0;
+}
+
+/* --- Resultados --- */
+#results-title {
+  font-size: 2.2rem;
+  margin: 0 0 6px;
+  color: #ffffff;
+}
+
+#results-summary {
+  font-size: 1.1rem;
+  margin: 0 0 6px;
+  color: #ffffff;
+}
+
+#final-score {
+  font-size: 4.5rem;
+  font-weight: 700;
+  color: #4cd137;
+  line-height: 1.1;
+}
+
+#results-skipped {
+  font-size: 1rem;
+  opacity: 0.7;
+  margin: 0 0 6px;
+}
+
+#high-score-msg {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffd32a;
+  margin: 0 0 16px;
+}
+
+.results-lists {
+  align-items: flex-start;
+}
+
+.list-column ul {
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.results-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.go-to-menu-btn.secondary {
+  background-color: transparent;
+  color: #ffffff;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  box-shadow: none;
+}
+
+/* En horizontal el menú de categorías cabe en cuatro columnas */
+@media (orientation: landscape) and (max-height: 500px) {
+  .category-grid {
+    grid-template-columns: repeat(4, 1fr);
+    max-width: 700px;
+    gap: 12px;
+  }
+  .category-icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 6px;
+  }
+  .category-name {
+    font-size: 1rem;
+  }
+  .screen {
+    padding: 16px;
+  }
+  p {
+    font-size: 20px;
+    margin: 6px 0;
+  }
+  #countdown-number {
+    font-size: 5rem;
+  }
+  #results-title {
+    font-size: 1.5rem;
+  }
+  #final-score {
+    font-size: 3rem;
+  }
+  .list-column ul {
+    max-height: 120px;
+  }
+}
+
+/* Aviso de "modo toque": solo se ve si no hay sensor de movimiento */
+.tap-note {
+  display: none;
+  font-size: 1rem;
+  color: #ffd32a;
+  max-width: 420px;
+  margin: 16px auto 0;
+}
+
+#instructions-view.tap-mode .tap-note {
+  display: block;
+}
+
+#instructions-view.tap-mode .hint {
+  display: none;
 }

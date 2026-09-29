@@ -1,8 +1,19 @@
-<html lang="en">
+<!DOCTYPE html>
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0c0c4b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>Charades — ¡A mímica!</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,6 +28,14 @@
         <button id="fullscreen-btn" class="secondary-btn">
           🔲 Pantalla Completa
         </button>
+
+        <div id="duration-row" class="duration-row">
+          <span class="duration-label">⏱️ Duración</span>
+          <button class="duration-btn" data-seconds="30">30s</button>
+          <button class="duration-btn active" data-seconds="60">60s</button>
+          <button class="duration-btn" data-seconds="90">90s</button>
+        </div>
+
         <p>Selecciona una categoría:</p>
         <!-- Botones de categoría aquí -->
         <div id="category-container" class="category-grid">
@@ -129,39 +148,38 @@
             <span class="category-name">Nosotros</span>
           </button>
         </div>
-        <!-- <button id="btn-start" onclick="startGame()">¡Jugar!</button> -->
       </section>
 
       <!-- SCREEN 2: GAMEPLAY -->
-      <!-- Notice the 'hidden' class -->
       <section id="screen-game" class="screen hidden">
+        <button id="abort-btn" aria-label="Salir de la partida">✕</button>
+
         <div id="flash-overlay" class="hidden">
           <h1 id="flash-text"></h1>
         </div>
+
         <!-- View 1: Instructions (Visible first) -->
         <div id="instructions-view">
           <h2>¡Pon el celular en tu frente!</h2>
-          <p>👆Flip up = ¡Correct!</p>
-          <p>👇Flip down = Skip</p>
+          <p>👆 Inclínalo hacia ARRIBA = ¡Correcto!</p>
+          <p>👇 Inclínalo hacia ABAJO = Pasar</p>
+          <p class="hint">Vuelve a la frente antes del siguiente giro</p>
+          <p class="tap-note">
+            Sin sensor de movimiento: toca la mitad de ARRIBA de la pantalla
+            para acertar y la de ABAJO para pasar.
+          </p>
         </div>
 
         <!-- View 2: Countdown (Hidden initially) -->
         <div id="countdown-view" class="hidden">
-          <h1
-            id="countdown-number"
-            style="font-size: 8rem; margin: 0; color: #ffffff"
-          >
-            3
-          </h1>
+          <h1 id="countdown-number">3</h1>
         </div>
 
         <!-- View 3: Active Game (Hidden initially) -->
         <div id="active-game-view" class="hidden">
-          <div
-            id="timer"
-            style="font-size: 2rem; font-weight: bold; color: #ff4757"
-          >
-            60
+          <div id="hud">
+            <div id="timer">60</div>
+            <div id="live-score-box">✅ <span id="live-score">0</span></div>
           </div>
           <h1 id="current-word">¡Preparado!</h1>
         </div>
@@ -169,19 +187,19 @@
 
       <!-- SCREEN 3: RESULTADOS -->
       <section id="screen-results" class="screen hidden">
-        <h2 style="font-size: 2.5rem; margin-bottom: 10px; color: #ffffff">
-          ¡Tiempo Terminado!
-        </h2>
+        <h2 id="results-title">¡Tiempo Terminado!</h2>
 
-        <p style="font-size: 1.2rem; margin-bottom: 40px; color: #666">
+        <p id="results-summary">
           Lograste adivinar:<br />
-          <span
-            id="final-score"
-            style="font-size: 5rem; font-weight: bold; color: #ff4757"
-            >0</span
-          ><br />
+          <span id="final-score">0</span><br />
           palabras
         </p>
+
+        <p id="results-skipped">
+          Pasadas: <span id="final-skipped">0</span>
+        </p>
+
+        <p id="high-score-msg" class="hidden"></p>
 
         <div class="results-lists">
           <div class="list-column">
@@ -194,7 +212,10 @@
           </div>
         </div>
 
-        <button class="go-to-menu-btn">Jugar Otra Vez</button>
+        <div class="results-actions">
+          <button id="replay-btn" class="go-to-menu-btn">🔄 Otra vez</button>
+          <button id="menu-btn" class="go-to-menu-btn secondary">🏠 Menú</button>
+        </div>
       </section>
     </div>
     <script src="./app.js"></script>

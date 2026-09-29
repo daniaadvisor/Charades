@@ -1091,9 +1091,15 @@ const charadesData = [
   },
 ];
 
+/* =====================================================================
+   CHARADES — Lógica del juego
+   ===================================================================== */
+
+// --- Elementos del DOM ---
 const categoryGrid = document.querySelector(".category-grid");
 const screenMenu = document.getElementById("screen-menu");
 const screenGame = document.getElementById("screen-game");
+const screenResults = document.getElementById("screen-results");
 
 const instructionsView = document.getElementById("instructions-view");
 const countdownView = document.getElementById("countdown-view");
@@ -1101,259 +1107,566 @@ const activeGameView = document.getElementById("active-game-view");
 const countdownNumber = document.getElementById("countdown-number");
 const timerDisplay = document.getElementById("timer");
 const currentWordDisplay = document.getElementById("current-word");
-const screenResults = document.getElementById("screen-results"); // Make sure this is in your HTML!
+const liveScoreDisplay = document.getElementById("live-score");
+
 const finalScoreDisplay = document.getElementById("final-score");
-const goToMenuBtn = document.querySelector(".go-to-menu-btn");
-let currentWord = ""; // Para recordar qué palabra está en pantalla
-let correctWords = []; // Array para palabras adivinadas
-let skippedWords = []; // Array para palabras saltadas
+const finalSkippedDisplay = document.getElementById("final-skipped");
+const highScoreDisplay = document.getElementById("high-score-msg");
+const goToMenuBtn = document.getElementById("menu-btn");
+const replayBtn = document.getElementById("replay-btn");
+const abortBtn = document.getElementById("abort-btn");
+const durationRow = document.getElementById("duration-row");
 
 const flashOverlay = document.getElementById("flash-overlay");
 const flashText = document.getElementById("flash-text");
-const correctSound = new Audio("./sounds/correct-sound.mp3");
-const skipSound = new Audio("./sounds/wrong-sound.mp3");
 
+// --- Estado del juego ---
+let currentWord = ""; // Palabra que está en pantalla ahora mismo
+let correctWords = []; // Palabras adivinadas
+let skippedWords = []; // Palabras saltadas
 let score = 0;
-let timeLeft = 60;
-let timerInterval;
-let currentWordsList = []; // This will hold the unplayed words for the current round
+let roundSeconds = 60; // Duración elegida en el menú
+let timeLeft = roundSeconds;
+let timerInterval = null;
+let tiltPoll = null;
+let currentWordsList = []; // Palabras que quedan por salir en esta ronda
 let playing = false;
+let roundStarting = false; // Evita que un doble toque arranque dos rondas
 let activeCategory = "";
 
-// --- Motion Variables ---
-let isReadyForNextWord = true; // Prevents rapid-fire skipping
-let motionListenerActive = false; // Ensures we only attach the listener once
-
-// ✨ THE MAGIC TRICK: A custom wait function using Promises
-// This lets us pause our code for a specific amount of milliseconds
+// ✨ Pequeña ayuda para pausar el código X milisegundos
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const fullscreenBtn = document.getElementById("fullscreen-btn");
+/* ---------------------------------------------------------------------
+   SONIDO
+   En móvil el navegador bloquea el audio hasta que el usuario toca algo.
+   Por eso "desbloqueamos" los dos sonidos en el mismo toque que elige la
+   categoría: así suenan al instante durante la partida.
+   ------------------------------------------------------------------ */
+const correctSound = new Audio("./sounds/correct-sound.mp3");
+const skipSound = new Audio("./sounds/wrong-sound.mp3");
+[correctSound, skipSound].forEach((s) => {
+  s.preload = "auto";
+  s.load();
+});
+let audioUnlocked = false;
 
-fullscreenBtn.addEventListener("click", function () {
-  // Comprobamos si NO estamos en pantalla completa
-  if (!document.fullscreenElement) {
-    // Pedimos al navegador que el documento (toda la página) ocupe la pantalla
-    document.documentElement.requestFullscreen().catch((err) => {
-      console.log(
-        `Error al intentar activar la pantalla completa: ${err.message}`,
-      );
-    });
-    // Cambiamos el texto del botón
-    fullscreenBtn.innerText = "✖ Salir de Pantalla Completa";
-  } else {
-    // Si ya estamos en pantalla completa, salimos
-    document.exitFullscreen();
-    fullscreenBtn.innerText = "🔲 Pantalla Completa";
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+
+  [correctSound, skipSound].forEach((s) => {
+    const previousVolume = s.volume;
+    s.volume = 0;
+    const p = s.play();
+    if (p) {
+      p.then(() => {
+        s.pause();
+        s.currentTime = 0;
+        s.volume = previousVolume;
+      }).catch(() => {
+        s.volume = previousVolume;
+      });
+    }
+  });
+
+  primeBeeper(); // despierta también el AudioContext de los pitidos
+}
+
+function playSound(sound) {
+  try {
+    sound.currentTime = 0;
+    const p = sound.play();
+    if (p) p.catch(() => {});
+  } catch (e) {
+    /* si el navegador lo bloquea, seguimos con vibración + destello */
+  }
+}
+
+// Pitidos sintetizados (cuenta atrás, últimos segundos y final).
+// No necesitan ningún fichero de sonido extra.
+let audioCtx = null;
+
+function primeBeeper() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) {
+    /* sin pitidos, no pasa nada */
+  }
+}
+
+function beep(freq, durationMs, volume) {
+  if (volume === undefined) volume = 0.18;
+  try {
+    primeBeeper();
+    if (!audioCtx) return;
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      audioCtx.currentTime + durationMs / 1000,
+    );
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + durationMs / 1000);
+  } catch (e) {
+    /* sin pitidos, no pasa nada */
+  }
+}
+
+/* ---------------------------------------------------------------------
+   WAKE LOCK — que la pantalla NO se apague mientras se juega
+   ------------------------------------------------------------------ */
+let wakeLock = null;
+
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator && wakeLock === null) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => {
+        wakeLock = null;
+      });
+    }
+  } catch (e) {
+    console.log("Wake Lock no disponible:", e.message);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+// Si el usuario sale de la app y vuelve, el sistema suelta el wake lock:
+// hay que volver a pedirlo.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && (playing || roundStarting)) {
+    requestWakeLock();
   }
 });
 
-categoryGrid.addEventListener("click", function (event) {
-  const clickedButton = event.target.closest(".category-btn");
-  if (!clickedButton) return;
+/* ---------------------------------------------------------------------
+   DETECCIÓN DE MOVIMIENTO
+   ------------------------------------------------------------------ */
 
-  activeCategory = clickedButton.dataset.category;
+// `tilt` va de -1 a +1 y mide hacia dónde MIRA LA PANTALLA:
+//   +1 → pantalla mirando al techo    (giro hacia arriba 👆 = ¡Correcto!)
+//    0 → móvil vertical, en la frente (posición neutra)
+//   -1 → pantalla mirando al suelo    (giro hacia abajo  👇 = Pasar)
+//
+// Se calcula como cos(beta)·cos(gamma), la componente vertical de la normal
+// de la pantalla. A diferencia de usar `gamma` a secas, este valor:
+//   · vale 0 en la frente, tanto en vertical como en horizontal,
+//   · es continuo (gamma salta de +90 a -90 y causaba dobles registros),
+//   · no depende de hacia qué lado hayas girado el móvil.
+const TILT_ACTION = 0.55; // ~33° desde la vertical → dispara la jugada
+const TILT_NEUTRAL = 0.25; // ~15° desde la vertical → zona neutra
+const NEUTRAL_DWELL_MS = 220; // hay que volver al centro y quedarse este rato
+const ACTION_COOLDOWN_MS = 600; // tiempo sordo después de cada jugada
+const SMOOTHING = 0.3; // filtro para el ruido del sensor
 
-  // Ask for motion permissions BEFORE starting the round
-  requestMotionPermissionAndStart(activeCategory);
-});
+let tilt = 0;
+let tiltInitialised = false;
+let armed = false; // ¿puede dispararse una jugada ahora mismo?
+let neutralSince = 0; // desde cuándo está en la zona neutra
+let lastActionAt = 0;
+let orientationWorking = false;
+let motionListenersActive = false;
+let tapMode = false; // true = sin sensor, se juega tocando la pantalla
+
+function resetTiltState() {
+  tilt = 0;
+  tiltInitialised = false;
+  armed = false; // obliga a pasar por la frente antes de la primera jugada
+  neutralSince = 0;
+  lastActionAt = 0;
+}
 
 function requestMotionPermissionAndStart(category) {
-  // Check if we are on an iOS device that requires explicit permission
+  // iOS —y desde hace poco también Chrome en Android— exigen pedir permiso
+  // explícito, y solo desde un gesto del usuario.
   if (
     typeof DeviceOrientationEvent !== "undefined" &&
     typeof DeviceOrientationEvent.requestPermission === "function"
   ) {
     DeviceOrientationEvent.requestPermission()
       .then((permissionState) => {
-        if (permissionState === "granted") {
-          activateMotionSensor();
-          startRound(category); // Start the game ONLY if they say yes
-        } else {
-          alert(
-            "¡Necesitamos acceso al sensor de movimiento para poder jugar!",
-          );
-        }
+        if (permissionState === "granted") activateMotionSensor();
+        else useTapMode(); // sin sensor, pero se puede jugar tocando
+        startRound(category);
       })
-      .catch(console.error);
+      .catch(() => {
+        useTapMode();
+        startRound(category);
+      });
   } else {
-    // Non-iOS devices (Android, PC) don't need explicit permission
+    // Navegadores que no piden permiso explícito
     activateMotionSensor();
     startRound(category);
   }
 }
 
+// Si no hay sensor (o lo han denegado) NO dejamos al jugador tirado:
+// se juega tocando la mitad de arriba / la mitad de abajo de la pantalla.
+function useTapMode() {
+  tapMode = true;
+  instructionsView.classList.add("tap-mode");
+}
+
 function activateMotionSensor() {
-  // Only add the listener if we haven't already
-  if (!motionListenerActive) {
-    window.addEventListener("deviceorientation", handleOrientation);
-    motionListenerActive = true;
-  }
+  if (motionListenersActive) return;
+  motionListenersActive = true;
+
+  window.addEventListener("deviceorientation", handleOrientation);
+
+  // Red de seguridad: algunos Android no emiten `deviceorientation`.
+  // Si en 1 segundo no ha llegado ninguna lectura, usamos el acelerómetro.
+  setTimeout(() => {
+    if (!orientationWorking && typeof DeviceMotionEvent !== "undefined") {
+      window.addEventListener("devicemotion", handleMotionFallback);
+    }
+  }, 1000);
 }
 
 function handleOrientation(event) {
-  // If the game isn't currently active, ignore the motion
-  if (!playing) return;
+  if (event.beta === null || event.gamma === null) return;
+  orientationWorking = true;
 
-  // Gamma is the left-to-right tilt when in portrait,
-  // but becomes front-to-back tilt when the phone is held in landscape!
-  const tilt = event.gamma;
+  const rad = Math.PI / 180;
+  updateTilt(Math.cos(event.beta * rad) * Math.cos(event.gamma * rad));
+}
 
-  if (isReadyForNextWord) {
-    // Thresholds: You might need to tweak these numbers (45 and -45)
-    // depending on what feels natural when testing on your phone.
+function handleMotionFallback(event) {
+  if (orientationWorking) {
+    window.removeEventListener("devicemotion", handleMotionFallback);
+    return;
+  }
+  const g = event.accelerationIncludingGravity;
+  if (!g || g.z === null || g.z === undefined) return;
 
-    if (tilt > 30) {
-      // Phone tilted UP (Screen pointing to the ceiling)
-      skipWord();
-      isReadyForNextWord = false; // Lock the sensor
-    } else if (tilt < -45) {
-      // Phone tilted DOWN (Screen pointing to the floor)
-      markCorrect();
-      isReadyForNextWord = false; // Lock the sensor
-    }
+  // La gravedad sobre el eje Z del móvil dice lo mismo: +9.8 = pantalla arriba
+  updateTilt(Math.max(-1, Math.min(1, g.z / 9.81)));
+}
+
+function updateTilt(rawValue) {
+  if (!tiltInitialised) {
+    tilt = rawValue;
+    tiltInitialised = true;
+  } else {
+    tilt += (rawValue - tilt) * SMOOTHING;
+  }
+  evaluateTilt();
+}
+
+function evaluateTilt() {
+  if (!playing || !tiltInitialised) return;
+  const now = performance.now();
+
+  // ¿Está el móvil vertical (en la frente)?
+  if (Math.abs(tilt) < TILT_NEUTRAL) {
+    if (neutralSince === 0) neutralSince = now;
+
+    // Solo rearmamos si se ha mantenido QUIETO en el centro un instante.
+    // Así el rebote al volver de un giro no cuenta como jugada nueva.
+    if (!armed && now - neutralSince >= NEUTRAL_DWELL_MS) armed = true;
+    return;
   }
 
-  // UNLOCK THE SENSOR:
-  // When the user brings the phone back to the center (flat on forehead)
-  // We look for a tilt between -15 and 15 degrees (neutral position)
-  // if (!isReadyForNextWord && tilt > -15 && tilt < 15) {
-  //   isReadyForNextWord = true;
-  // }
-  if (!isReadyForNextWord && tilt > -40 && tilt < 25) {
-    isReadyForNextWord = true;
+  neutralSince = 0;
+  if (!armed) return;
+  if (Math.abs(tilt) < TILT_ACTION) return; // zona intermedia: no es jugada
+
+  registerAction(tilt > 0);
+}
+
+// Punto único de entrada para TODAS las jugadas (sensor, toque o teclado)
+function registerAction(isCorrect) {
+  if (!playing) return;
+
+  const now = performance.now();
+  if (now - lastActionAt < ACTION_COOLDOWN_MS) return;
+
+  lastActionAt = now;
+  armed = false;
+  neutralSince = 0;
+
+  if (isCorrect) markCorrect();
+  else skipWord();
+}
+
+/* ---------------------------------------------------------------------
+   PANTALLA COMPLETA
+   ------------------------------------------------------------------ */
+const fullscreenBtn = document.getElementById("fullscreen-btn");
+
+function enterFullscreen() {
+  if (
+    !document.fullscreenElement &&
+    document.documentElement.requestFullscreen
+  ) {
+    document.documentElement.requestFullscreen().catch(() => {});
   }
 }
 
-async function startRound(activeCategory) {
-  console.log("¡Categoría seleccionada:", activeCategory, "!");
+fullscreenBtn.addEventListener("click", function () {
+  if (!document.fullscreenElement) {
+    enterFullscreen();
+  } else if (document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+});
 
-  // 1. Switch from Menu to Game Screen
+// Mantenemos el texto del botón sincronizado aunque salgan con ESC o gesto
+document.addEventListener("fullscreenchange", () => {
+  fullscreenBtn.innerText = document.fullscreenElement
+    ? "✖ Salir de Pantalla Completa"
+    : "🔲 Pantalla Completa";
+});
+
+/* ---------------------------------------------------------------------
+   MENÚ: duración de la ronda y elección de categoría
+   ------------------------------------------------------------------ */
+function loadSetting(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveSetting(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    /* modo privado: seguimos jugando, solo que sin guardar */
+  }
+}
+
+roundSeconds = Number(loadSetting("charades-duration", 60)) || 60;
+
+function paintDurationButtons() {
+  durationRow.querySelectorAll(".duration-btn").forEach((btn) => {
+    btn.classList.toggle("active", Number(btn.dataset.seconds) === roundSeconds);
+  });
+}
+paintDurationButtons();
+
+durationRow.addEventListener("click", function (event) {
+  const btn = event.target.closest(".duration-btn");
+  if (!btn) return;
+  roundSeconds = Number(btn.dataset.seconds);
+  saveSetting("charades-duration", roundSeconds);
+  paintDurationButtons();
+});
+
+categoryGrid.addEventListener("click", function (event) {
+  const clickedButton = event.target.closest(".category-btn");
+  if (!clickedButton) return;
+  if (roundStarting || playing) return; // evita dobles toques
+
+  roundStarting = true;
+  activeCategory = clickedButton.dataset.category;
+
+  // Estas dos cosas TIENEN que ocurrir dentro del gesto del usuario
+  unlockAudio();
+  enterFullscreen();
+
+  requestMotionPermissionAndStart(activeCategory);
+});
+
+/* ---------------------------------------------------------------------
+   RONDA
+   ------------------------------------------------------------------ */
+async function startRound(category) {
+  console.log("¡Categoría seleccionada:", category, "!");
+
+  requestWakeLock();
+
   screenMenu.classList.add("hidden");
+  screenResults.classList.add("hidden");
   screenGame.classList.remove("hidden");
 
-  // Reset the views (Crucial for when they play a 2nd or 3rd round)
+  // Reiniciamos las vistas (importante a partir de la segunda partida)
   instructionsView.classList.remove("hidden");
   countdownView.classList.add("hidden");
   activeGameView.classList.add("hidden");
+  flashOverlay.classList.add("hidden");
 
-  // 2. Show instructions and pause code for 2 seconds (2000ms)
-  await wait(2000);
+  resetTiltState();
 
-  // 3. Hide instructions, show the countdown view
+  // 1. Instrucciones
+  await wait(2500);
+  if (!roundStarting) return; // han pulsado salir mientras tanto
+
+  // 2. Cuenta atrás 3 · 2 · 1
   instructionsView.classList.add("hidden");
   countdownView.classList.remove("hidden");
 
-  // 4. Run the 3-second countdown
   for (let i = 3; i > 0; i--) {
     countdownNumber.innerText = i;
-    await wait(1000); // Pause for 1 second between numbers
+    beep(660, 130);
+    await wait(1000);
+    if (!roundStarting) return;
   }
 
-  // 5. Hide countdown, show the actual game UI
+  countdownNumber.innerText = "¡YA!";
+  beep(990, 260);
+  await wait(400);
+  if (!roundStarting) return;
+
+  // 3. ¡A jugar!
   countdownView.classList.add("hidden");
   activeGameView.classList.remove("hidden");
 
-  // 6. NOW the real game begins!
-  isReadyForNextWord = false;
   playing = true;
-  startGameplay(activeCategory);
+  roundStarting = false;
+  startGameplay(category);
 }
 
 function startGameplay(category) {
-  console.log("¡El juego ha comenzado con la categoría:", category);
-
-  // 1. Find the correct category object in your charadesData array
   const categoryData = charadesData.find((item) => item.category === category);
+  if (!categoryData) {
+    console.error("No hay palabras para la categoría:", category);
+    endGame(true);
+    return;
+  }
 
-  // 2. Make a COPY of the words array so we don't delete the original data
+  // Copiamos el array para no vaciar los datos originales
   currentWordsList = [...categoryData.words];
 
-  // 3. Reset the game stats
   score = 0;
   correctWords = [];
   skippedWords = [];
-  timeLeft = 60;
+  timeLeft = roundSeconds;
   timerDisplay.innerText = timeLeft;
-  timerDisplay.style.color = "#ff4757"; // Reset color to default (optional)
+  timerDisplay.style.color = "#ff4757";
+  liveScoreDisplay.innerText = "0";
 
-  // 4. Show the very first word
   showNextWord();
 
-  // 5. Start the 60-second countdown timer
   timerInterval = setInterval(() => {
     timeLeft--;
     timerDisplay.innerText = timeLeft;
 
-    // Optional: Make the timer turn red and pulse when 10 seconds are left
     if (timeLeft <= 10) {
-      timerDisplay.style.color = "red";
+      timerDisplay.style.color = "#ffd32a";
+      timerDisplay.classList.add("pulsing");
     }
+    if (timeLeft <= 5 && timeLeft > 0) beep(440, 70, 0.12);
 
-    // When time runs out...
-    if (timeLeft <= 0) {
-      endGame();
-    }
-  }, 1000); // 1000 milliseconds = 1 second
+    if (timeLeft <= 0) endGame();
+  }, 1000);
+
+  // Red de seguridad: si el sensor deja de emitir eventos con el móvil
+  // quieto, este pulso garantiza que la zona neutra se rearme igualmente.
+  tiltPoll = setInterval(evaluateTilt, 60);
 }
 
 function showNextWord() {
-  // Safety check: Did they somehow guess all 50 words in 60 seconds?
+  // ¿Se han acabado las palabras de la categoría?
   if (currentWordsList.length === 0) {
     endGame();
     return;
   }
 
-  // 1. Pick a random index based on how many words are currently left
   const randomIndex = Math.floor(Math.random() * currentWordsList.length);
-
-  // 2. Remove that exact word from our temporary array and store it in a variable
-  // .splice() returns an array of removed items, so we grab the first one [0]
   currentWord = currentWordsList.splice(randomIndex, 1)[0];
   currentWordDisplay.innerText = currentWord;
+  fitWordToScreen();
+}
 
-  const length = currentWord.length;
+// Ajusta el tamaño de la palabra para que SIEMPRE quepa en pantalla,
+// en vertical o en horizontal, sea corta o una frase larga.
+function fitWordToScreen() {
+  const maxWidth = window.innerWidth - 32;
+  const maxHeight = window.innerHeight * 0.6;
 
-  if (length <= 7) {
-    // Palabras cortas (ej: "Perro", "Sol")
-    currentWordDisplay.style.fontSize = "10rem";
-  } else if (length > 7 && length < 10) {
-    // Palabras medianas (ej: "Harry Potter")
-    currentWordDisplay.style.fontSize = "8rem";
-  } else if (length >= 10 && length < 20) {
-    // Palabras medianas (ej: "Harry Potter")
-    currentWordDisplay.style.fontSize = "5rem";
-  } else {
-    // Frases largas (ej: "Catedral de Sal de Zipaquirá")
-    currentWordDisplay.style.fontSize = "4rem";
+  let size = Math.min(window.innerWidth * 0.75, window.innerHeight * 0.42);
+  currentWordDisplay.style.fontSize = size + "px";
+
+  let guard = 60;
+  while (
+    guard-- > 0 &&
+    size > 22 &&
+    (currentWordDisplay.scrollWidth > maxWidth ||
+      currentWordDisplay.scrollHeight > maxHeight)
+  ) {
+    size *= 0.9;
+    currentWordDisplay.style.fontSize = size + "px";
   }
 }
 
-function endGame() {
-  console.log("¡Tiempo terminado!");
+window.addEventListener("resize", () => {
+  if (playing) fitWordToScreen();
+});
+
+function endGame(aborted) {
+  if (!playing && !roundStarting) return; // que no se ejecute dos veces
+
   clearInterval(timerInterval);
+  clearInterval(tiltPoll);
+  timerInterval = null;
+  tiltPoll = null;
   playing = false;
+  roundStarting = false;
+  timerDisplay.classList.remove("pulsing");
+  flashOverlay.classList.add("hidden");
+  releaseWakeLock();
 
   screenGame.classList.add("hidden");
+
+  if (aborted === true) {
+    screenMenu.classList.remove("hidden");
+    return;
+  }
+
+  // Tres pitidos descendentes de "se acabó el tiempo"
+  beep(520, 180);
+  setTimeout(() => beep(400, 180), 190);
+  setTimeout(() => beep(300, 420), 380);
+  if ("vibrate" in navigator) navigator.vibrate([250, 100, 250]);
+
   screenResults.classList.remove("hidden");
   finalScoreDisplay.innerText = score;
+  finalSkippedDisplay.innerText = skippedWords.length;
+  replayBtn.innerText = "🔄 Otra vez: " + activeCategory;
 
-  // --- NUEVO: Llenar las listas de resultados ---
+  // Récord por categoría
+  const key = "charades-hs-" + activeCategory;
+  const previousBest = Number(loadSetting(key, 0));
+  if (score > previousBest) {
+    saveSetting(key, score);
+    highScoreDisplay.innerText = "🏆 ¡Nuevo récord en " + activeCategory + "!";
+    highScoreDisplay.classList.remove("hidden");
+  } else if (previousBest > 0) {
+    highScoreDisplay.innerText =
+      "Tu récord en " + activeCategory + ": " + previousBest;
+    highScoreDisplay.classList.remove("hidden");
+  } else {
+    highScoreDisplay.classList.add("hidden");
+  }
+
   const correctListUI = document.getElementById("correct-list");
   const skippedListUI = document.getElementById("skipped-list");
-
-  // Limpiar listas anteriores (importante si juegan más de una vez)
   correctListUI.innerHTML = "";
   skippedListUI.innerHTML = "";
 
-  // Insertar palabras correctas
   correctWords.forEach((word) => {
     const li = document.createElement("li");
     li.innerText = "✅ " + word;
     correctListUI.appendChild(li);
   });
 
-  // Insertar palabras saltadas
   skippedWords.forEach((word) => {
     const li = document.createElement("li");
     li.innerText = "❌ " + word;
@@ -1361,67 +1674,95 @@ function endGame() {
   });
 }
 
-function triggerFeedback(text, bgColor, vibratePattern) {
-  // 1. Vibración (Revisamos si el navegador lo soporta. Android sí, iOS Safari usualmente no).
-  if ("vibrate" in navigator) {
-    navigator.vibrate(vibratePattern);
-  }
+/* ---------------------------------------------------------------------
+   JUGADAS
+   ------------------------------------------------------------------ */
+let flashTimeout = null;
 
-  // 2. Destello Visual
-  flashText.innerText = text;
+function triggerFeedback(icon, text, bgColor, vibratePattern) {
+  if ("vibrate" in navigator) navigator.vibrate(vibratePattern);
+
+  flashText.innerText = icon + " " + text;
   flashOverlay.style.backgroundColor = bgColor;
   flashOverlay.classList.remove("hidden");
 
-  // 3. Ocultar el destello después de 400 milisegundos
-  setTimeout(() => {
+  clearTimeout(flashTimeout);
+  flashTimeout = setTimeout(() => {
     flashOverlay.classList.add("hidden");
-  }, 400);
+  }, 450);
 }
-// --- These will be triggered by your phone motion later ---
 
 function markCorrect() {
   if (!playing) return;
 
-  correctSound.currentTime = 0;
-  correctSound.play();
-
+  playSound(correctSound);
   score++;
-  correctWords.push(currentWord); // Guardar en la lista
+  correctWords.push(currentWord);
+  liveScoreDisplay.innerText = score;
 
-  // Feedback: "¡Correcto!", Verde, Vibración corta (100ms)
-  triggerFeedback("¡Correcto!", "#4cd137", 100);
-
+  triggerFeedback("✅", "¡Correcto!", "#4cd137", 120);
   showNextWord();
 }
 
 function skipWord() {
   if (!playing) return;
 
-  skipSound.currentTime = 0;
-  skipSound.play();
+  playSound(skipSound);
+  skippedWords.push(currentWord);
 
-  skippedWords.push(currentWord); // Guardar en la lista
-
-  // Feedback: "¡Pasó!", Rojo, Vibración doble (100ms vibra, 50ms pausa, 100ms vibra)
-  triggerFeedback("¡Pasó!", "#ff4757", [100, 50, 100]);
-
+  triggerFeedback("⏭️", "¡Pasó!", "#ff4757", [90, 60, 90]);
   showNextWord();
 }
 
+/* ---------------------------------------------------------------------
+   CONTROLES ALTERNATIVOS
+   Útiles para probar en el ordenador y en móviles sin sensor.
+   ------------------------------------------------------------------ */
+screenGame.addEventListener("click", (event) => {
+  if (!playing) return;
+  if (event.target.closest("#abort-btn")) return; // la X no es una jugada
+  // Mitad de arriba = correcto, mitad de abajo = pasar
+  registerAction(event.clientY < window.innerHeight / 2);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!playing) return;
+
+  if (event.key === "ArrowUp" || event.key === " ") {
+    event.preventDefault();
+    registerAction(true);
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    registerAction(false);
+  } else if (event.key === "Escape") {
+    endGame(true);
+  }
+});
+
+/* ---------------------------------------------------------------------
+   NAVEGACIÓN
+   ------------------------------------------------------------------ */
+abortBtn.addEventListener("click", () => {
+  endGame(true);
+});
+
+replayBtn.addEventListener("click", () => {
+  if (roundStarting || playing) return;
+  roundStarting = true;
+  unlockAudio();
+  startRound(activeCategory);
+});
+
 goToMenuBtn.addEventListener("click", function () {
-  // 3. Detenemos cualquier lógica del juego por seguridad
   playing = false;
+  roundStarting = false;
+  clearInterval(timerInterval);
+  clearInterval(tiltPoll);
+  releaseWakeLock();
 
-  // 4. Ocultamos las pantallas de resultados y de juego
   screenResults.classList.add("hidden");
-  screenGame.classList.add("hidden"); // Por precaución, nos aseguramos que esté oculta
-
-  // 5. Mostramos la pantalla del menú principal
+  screenGame.classList.add("hidden");
   screenMenu.classList.remove("hidden");
 
-  // Opcional pero recomendado: Resetear el texto del score a 0 para que no
-  // se vea el puntaje anterior una fracción de segundo la próxima vez que jueguen
-  document.getElementById("final-score").innerText = "0";
-
-  console.log("¡De vuelta al menú principal!");
+  finalScoreDisplay.innerText = "0";
 });
